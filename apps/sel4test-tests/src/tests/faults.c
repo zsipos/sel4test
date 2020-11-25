@@ -624,8 +624,8 @@ static int handle_fault(seL4_CPtr fault_ep, seL4_CPtr tcb, seL4_Word expected_fa
         test_check(seL4_GetMR(3) == 0x02000000);
         test_check(seL4_GetMR(4) == 0);
 #elif defined(CONFIG_ARCH_RISCV)
-        test_check(seL4_GetMR(3) == 2);
-        test_check(seL4_GetMR(4) == 0);
+        test_check(seL4_GetMR(2) == 2);
+        test_check(seL4_GetMR(3) == 0);
 #elif defined(CONFIG_ARCH_X86)
         /*
          * Curiously, the "resume flag" (bit 16) is set between the
@@ -752,7 +752,7 @@ static int test_fault(env_t env, int fault_type, bool inter_as)
                                           faulter_cspace,
                                           api_make_guard_skip_word(seL4_WordBits - env->cspace_size_bits),
                                           faulter_vspace, seL4_NilData);
-                test_assert(!error);
+                test_error_eq(error, seL4_NoError);
                 set_helper_priority(env, &faulter_thread, prio);
 
                 // Ensure that the BADGED and RESTART bits are not

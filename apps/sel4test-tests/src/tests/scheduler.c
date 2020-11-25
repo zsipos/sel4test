@@ -109,7 +109,7 @@ test_resume_self(struct env *env)
     ZF_LOGD("Starting test_resume_self\n");
     /* Ensure nothing bad happens if we resume ourselves. */
     int error = seL4_TCB_Resume(env->tcb);
-    test_assert(!error);
+    test_error_eq(error, seL4_NoError);
     ZF_LOGD("Ending test_resume_self\n");
     return sel4test_get_result();
 }
@@ -1522,27 +1522,35 @@ static inline uint64_t time_now(struct env *env)
 
 void test_simple_preempt_runner(size_t thread_id)
 {
-    size_t next_thread = thread_id + 1;
-    if (next_thread < PREEMPTION_THREADS) {
-        next_thread -= PREEMPTION_THREADS;
-    }
-
+    ssize_t next = (thread_id - 1) % PREEMPTION_THREADS;
     while (test_simple_preempt_start == 0) {
-        seL4_Yield();
+        ZF_LOGD("#%zu", thread_id);
     }
 
-    while (true) {
+    /* Get the count for the previous thread */
+    unsigned int next_data = preemption_thread_data[next];
+
+    /* We only stay in this loop until we get back to the monitor to
+     * ensure that we don't loop again if it takes too long to check all
+     * the threads. */
+    while (test_simple_preempt_start) {
         /* Signal test thread */
         unsigned int data = preemption_thread_data[thread_id] + 1;
         preemption_thread_data[thread_id] = data;
 
         ZF_LOGD("#%zu = %u", thread_id, data);
 
-        /* Busy wait to force pre-emption */
-        while (preemption_thread_data[next_thread] < data);
+        /* Wait for next thread to progress */
+        while (preemption_thread_data[next] <= next_data);
+        next_data = preemption_thread_data[next];
     }
 }
 
+
+/*
+ * Checks that ticks preempt threads of equal priority, and
+ * all threads get run RR exactly once
+ */
 static int test_simple_preempt(struct env *env)
 {
 #ifdef CONFIG_DEBUG_BUILD
@@ -1579,7 +1587,9 @@ static int test_simple_preempt(struct env *env)
 #endif
 
         /* Start the thread (will yield until we're ready) */
+        ZF_LOGD("Start thread %u", thread);
         start_helper(env, &threads[thread], (helper_fn_t) test_simple_preempt_runner, thread, 0, 0, 0);
+        ZF_LOGD("Started thread %u", thread);
     }
 
     /* Set a timeout for the test.
@@ -1588,22 +1598,12 @@ static int test_simple_preempt(struct env *env)
     uint64_t now = start;
 
     /* Start executing other threads */
+    ZF_LOGD("Releasing Threads");
     test_simple_preempt_start = 1;
+    /* Yield should cause all other threads to execute before returning
+     * to the current thread. */
     seL4_Yield();
-
-    /* Wait for each thread to update its data */
-    for (size_t thread = 0; thread < PREEMPTION_THREADS; thread += 1) {
-        /* Wait until thread has updated its data */
-        while (preemption_thread_data[thread] == 0 && now - start < MAX_TIME) {
-            seL4_Yield();
-            now = time_now(env);
-        };
-
-        /* Give up if we exceed the timeout */
-        if (now - start >= MAX_TIME) {
-            break;
-        }
-    }
+    test_simple_preempt_start = 0;
 
     /* Get the total time taken to synchronise */
     now = time_now(env);
